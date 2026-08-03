@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方块工坊 · 3D 正方体组合与三视图</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="panel">
+  <div class="panel-head">
+    <div class="title">🧊 方块工坊</div>
+    <button id="btn-panel-toggle" title="收起 / 展开">«</button>
+  </div>
+  <div class="panel-body">
+
+    <section>
+      <h3>操作模式</h3>
+      <div class="seg">
+        <button id="mode-move" class="active">移动方块</button>
+        <button id="mode-rotate">整体旋转</button>
+      </div>
+      <p class="hint">「整体旋转」：点击选中几何体后拖拽旋转，松手自动吸附 90°</p>
+    </section>
+
+    <section>
+      <h3>生成自由方块</h3>
+      <div class="row">
+        <input id="input-count" type="number" min="1" max="200" value="10">
+        <button id="btn-gen-free" class="primary">生成</button>
+      </div>
+      <p class="hint">数量 1–200，方块散落生成，可拖拽组合</p>
+    </section>
+
+    <section>
+      <h3>生成组合大立方体</h3>
+      <div class="cube-grid">
+        <button data-cube="2">2×2×2</button>
+        <button data-cube="3">3×3×3</button>
+        <button data-cube="4">4×4×4</button>
+        <button data-cube="5">5×5×5</button>
+      </div>
+      <p class="hint">一键生成 n×n×n 拼好的大立方体并自动选中</p>
+    </section>
+
+    <section>
+      <h3>三视图</h3>
+      <label class="check"><input type="checkbox" id="view-front"> 主视图（正面）</label>
+      <label class="check"><input type="checkbox" id="view-top"> 俯视图（上面）</label>
+      <label class="check"><input type="checkbox" id="view-left"> 左视图（左面）</label>
+      <p class="hint">勾选后视图从几何体表面缓慢剥离并平铺展示；显示「选中几何体」，未选中显示全部</p>
+    </section>
+
+    <section>
+      <h3>信息</h3>
+      <div class="stats">
+        <span>方块 <b id="stat-cubes">0</b></span>
+        <span>组合 <b id="stat-groups">0</b></span>
+        <span>选中 <b id="stat-selected">—</b></span>
+      </div>
+      <div class="row wrap">
+        <button id="btn-del">删除选中</button>
+        <button id="btn-reset">重置视角</button>
+        <button id="btn-clear" class="danger">清空</button>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div id="hint">
+  🖱 左键拖拽：移动方块 / 空白处旋转视角 · 右键拖拽：平移 · 滚轮：缩放 ·
+  点击方块选中整个组合 · Delete 键删除选中
+</div>
+
+<script src="js/three.min.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
