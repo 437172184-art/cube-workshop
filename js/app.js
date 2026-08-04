@@ -88,8 +88,12 @@
   var nextCubeId = 1;
 
   function makeCube(cell) {
-    var mat = new THREE.MeshStandardMaterial({ color: BASE_COLOR, roughness: 0.4, metalness: 0.05 });
-    var mesh = new THREE.Mesh(sharedBox, mat);
+    // 6 个面各自一个材质：0=+x 1=-x 2=+y 3=-y 4=+z 5=-z（用于单独点亮某个方向的面）
+    var mats = [];
+    for (var mi = 0; mi < 6; mi++) {
+      mats.push(new THREE.MeshStandardMaterial({ color: BASE_COLOR, roughness: 0.4, metalness: 0.05 }));
+    }
+    var mesh = new THREE.Mesh(sharedBox, mats);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     var edges = new THREE.LineSegments(sharedBoxEdges, new THREE.LineBasicMaterial({ color: EDGE_COLOR, transparent: true, opacity: 0.6 }));
@@ -97,7 +101,7 @@
     var cube = {
       id: nextCubeId++,
       cell: new THREE.Vector3(cell.x, cell.y, cell.z),
-      mesh: mesh, mat: mat, edges: edges,
+      mesh: mesh, mat: mats[0], mats: mats, edges: edges,
       groupId: 0
     };
     cubeById.set(cube.id, cube);
@@ -187,9 +191,11 @@
     for (var i = 0; i < cubes.length; i++) {
       var c = cubes[i];
       var sel = selectedIds.has(c.id);
-      c.mat.color.set(sel ? SEL_COLOR : BASE_COLOR);
-      if (sel) { c.mat.emissive.setHex(0x7a3d00); c.mat.emissiveIntensity = 0.25; }
-      else { c.mat.emissive.setHex(0x000000); c.mat.emissiveIntensity = 0; }
+      for (var m = 0; m < 6; m++) {
+        c.mats[m].color.set(sel ? SEL_COLOR : BASE_COLOR);
+        if (sel) { c.mats[m].emissive.setHex(0x7a3d00); c.mats[m].emissiveIntensity = 0.25; }
+        else { c.mats[m].emissive.setHex(0x000000); c.mats[m].emissiveIntensity = 0; }
+      }
     }
   }
 
@@ -312,8 +318,7 @@
     if (!target.length) {
       if (p.canvas) {
         var _c0 = p.canvas.getContext('2d');
-        _c0.fillStyle = '#ffffff';
-        _c0.fillRect(0, 0, p.canvas.width, p.canvas.height);
+        _c0.clearRect(0, 0, p.canvas.width, p.canvas.height);
         p.texture.needsUpdate = true;
       }
       return;
@@ -322,9 +327,10 @@
     viewBBox = b;
     var def = VIEWS[key];
     var pad = 0.7;
-    var wWorld, hWorld, left, topW;
+    var wWorld, hWorld, left, topW, bottomW;
+    var pyUp = true; // 屏幕 y 随 v 增大而减小（顶对齐）
     if (key === 'front') { left = b.min.x - pad; topW = b.max.y + pad; wWorld = (b.max.x - b.min.x) + 2 * pad; hWorld = (b.max.y - b.min.y) + 2 * pad; }
-    else if (key === 'top') { left = b.min.x - pad; topW = -b.min.z + pad; wWorld = (b.max.x - b.min.x) + 2 * pad; hWorld = (b.max.z - b.min.z) + 2 * pad; }
+    else if (key === 'top') { left = b.min.x - pad; bottomW = b.min.z - pad; wWorld = (b.max.x - b.min.x) + 2 * pad; hWorld = (b.max.z - b.min.z) + 2 * pad; pyUp = false; }
     else { left = b.min.z - pad; topW = b.max.y + pad; wWorld = (b.max.z - b.min.z) + 2 * pad; hWorld = (b.max.y - b.min.y) + 2 * pad; }
     var maxDim = Math.max(wWorld, hWorld);
     var CW = Math.max(64, Math.round(512 * wWorld / maxDim));
@@ -334,9 +340,7 @@
       p.canvas.height = CH;
     }
     var ctx = p.canvas.getContext('2d');
-    ctx.clearRect(0, 0, CW, CH);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, CW, CH);
+    ctx.clearRect(0, 0, CW, CH); // 透明背景，只画几个面组成的图形
 
     // 深度排序（画家算法）：从远到近
     var order = target.slice().sort(function (a, cc) {
@@ -346,10 +350,9 @@
     });
 
     function toPx(wu, wv) {
-      return [
-        (wu - left) / wWorld * CW,
-        (topW - wv) / hWorld * CH
-      ];
+      var px = (wu - left) / wWorld * CW;
+      var py = pyUp ? (topW - wv) / hWorld * CH : (wv - bottomW) / hWorld * CH;
+      return [px, py];
     }
 
     // 先填充后描边，避免描边被遮挡；分两遍
@@ -363,7 +366,7 @@
         var a = toPx(u0, v1);
         var bb = toPx(u1, v0);
         if (pass === 0) {
-          ctx.fillStyle = '#e9eef4';
+          ctx.fillStyle = '#' + (selectedIds.has(order[i].id) ? SEL_COLOR : BASE_COLOR).toString(16).padStart(6, '0');
           ctx.fillRect(a[0], a[1], bb[0] - a[0], bb[1] - a[1]);
         } else {
           ctx.strokeRect(a[0], a[1], bb[0] - a[0], bb[1] - a[1]);
@@ -372,9 +375,12 @@
     }
     p.texture.needsUpdate = true;
 
-    // 更新面板世界尺寸（保持比例）
-    var scale = 3.2 / Math.max(CW, CH);
-    p.mesh.scale.set(CW * scale, CH * scale, 1);
+    // 面板世界尺寸 = 对应面的大小（1:1，大小和几何体面一样）
+    var faceW, faceH;
+    if (key === 'front') { faceW = b.max.x - b.min.x + 1; faceH = b.max.y - b.min.y + 1; }
+    else if (key === 'top') { faceW = b.max.x - b.min.x + 1; faceH = b.max.z - b.min.z + 1; }
+    else { faceW = b.max.z - b.min.z + 1; faceH = b.max.y - b.min.y + 1; }
+    p.mesh.scale.set(faceW, faceH, 1);
   }
 
   function refreshViewContent() {
@@ -388,19 +394,16 @@
     canvas.width = 256;
     canvas.height = 256;
     var texture = new THREE.CanvasTexture(canvas);
-    var mat = new THREE.MeshBasicMaterial({ map: texture });
+    var mat = new THREE.MeshBasicMaterial({ map: texture, color: 0xffd43b, transparent: true });
     var mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-    var frame = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x1b2a3c }));
-    frame.scale.set(1.06, 1.06, 1);
-    frame.position.z = -0.01;
-    mesh.add(frame);
     scene.add(mesh);
     var label = document.createElement('div');
     label.className = 'view-label';
     label.textContent = def.label;
     document.body.appendChild(label);
-    viewPanels[key] = { canvas: canvas, texture: texture, mesh: mesh, frame: frame, label: label, tween: null, static: false, out: false };
+    viewPanels[key] = { canvas: canvas, texture: texture, mat: mat, mesh: mesh, label: label, tween: null, static: false, out: false };
     drawView(key);
+    mesh.visible = false; // 先隐藏，等镜头转到对应视角再显示
   }
 
   function removeViewPanel(key) {
@@ -429,6 +432,39 @@
     return { pos: pos, quat: dummy.quaternion.clone() };
   }
 
+  // 面板的最终落点：固定在几何体周围的世界坐标（永远在地面以上、几何体以外）
+  // 三个视图面板：贴在几何体右侧、与几何体间隔 1 个单元格，自下而上堆叠
+  function viewSlotPos(key) {
+    var b = viewBBox;
+    if (!b) return null;
+    var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0); // 屏幕右方向（世界）
+    var center = new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2);
+    // 几何体沿屏幕右方向的外缘距离
+    var ext = -Infinity;
+    var corners = [
+      new THREE.Vector3(b.min.x, b.min.y, b.min.z), new THREE.Vector3(b.max.x, b.min.y, b.min.z),
+      new THREE.Vector3(b.min.x, b.max.y, b.min.z), new THREE.Vector3(b.max.x, b.max.y, b.min.z),
+      new THREE.Vector3(b.min.x, b.min.y, b.max.z), new THREE.Vector3(b.max.x, b.min.y, b.max.z),
+      new THREE.Vector3(b.min.x, b.max.y, b.max.z), new THREE.Vector3(b.max.x, b.max.y, b.max.z)
+    ];
+    for (var ci = 0; ci < 8; ci++) {
+      var d = corners[ci].dot(right) - center.dot(right);
+      if (d > ext) ext = d;
+    }
+    var faceW, faceH;
+    if (key === 'front') { faceW = b.max.x - b.min.x + 1; faceH = b.max.y - b.min.y + 1; }
+    else if (key === 'top') { faceW = b.max.x - b.min.x + 1; faceH = b.max.z - b.min.z + 1; }
+    else { faceW = b.max.z - b.min.z + 1; faceH = b.max.y - b.min.y + 1; }
+    var hh = Math.max(faceH, 2);
+    var step = hh + 0.6;
+    var y0 = hh / 2 + 0.3;
+    var idx = { front: 2, top: 1, left: 0 }[key]; // 主视图上、俯视图中、左视图下
+    // 右侧偏移 = 几何体外缘 + 1 个单元格 + 面板半宽
+    var pos = center.clone().addScaledVector(right, ext + 1 + faceW / 2);
+    pos.y = y0 + idx * step;
+    return { pos: pos, quat: faceCameraQuat(pos) };
+  }
+
   function viewAnchorPos(key) {
     var def = VIEWS[key];
     var ndcX = def.anchor.fx * 2 - 1;
@@ -440,62 +476,190 @@
   }
 
   function faceCameraQuat(pos) {
+    var dir = camera.position.clone().sub(pos).normalize();
+    var up = new THREE.Vector3(0, 1, 0);
+    if (Math.abs(dir.dot(up)) > 0.97) up.set(0, 0, -1); // 相机几乎垂直时换一个上方向，避免万向锁
     var dummy = new THREE.Object3D();
     dummy.position.copy(pos);
-    dummy.up.set(0, 1, 0);
+    dummy.up.copy(up);
     dummy.lookAt(camera.position);
     return dummy.quaternion.clone();
   }
 
-  function startPeelIn(key) {
-    var p = viewPanels[key];
-    var start = viewStartPose(key);
-    p.tween = { type: 'peelIn', key: key, t0: performance.now(), dur: 1700, start: start };
-    p.static = false;
-    p.out = false;
+  // ---- 三视图展示流程：镜头转到对应视角 → 对应面变黄 → 该面平移移出 ----
+  var VIEW_ANGLES = {
+    front: { theta: 0, phi: Math.PI / 2 },        // 正前方
+    top: { theta: 0, phi: 0.12 },                 // 正上方
+    left: { theta: -Math.PI / 2, phi: Math.PI / 2 } // 正左方
+  };
+
+  // ---- 相机平滑转到目标视角 ----
+  var camTween = null;
+  function animateCameraTo(theta, phi, radius, target, dur) {
+    var toTheta = theta;
+    while (toTheta - orbit.theta > Math.PI) toTheta -= Math.PI * 2;
+    while (toTheta - orbit.theta < -Math.PI) toTheta += Math.PI * 2;
+    camTween = {
+      t0: performance.now(), dur: dur || 800,
+      from: { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius, tx: orbit.target.x, ty: orbit.target.y, tz: orbit.target.z },
+      to: { theta: toTheta, phi: phi, radius: radius, tx: target.x, ty: target.y, tz: target.z }
+    };
+  }
+  function updateCamTween(now) {
+    if (!camTween) return;
+    var e = Math.min(1, (now - camTween.t0) / camTween.dur);
+    var k = easeInOutCubic(e);
+    var f = camTween.from, to = camTween.to;
+    orbit.theta = f.theta + (to.theta - f.theta) * k;
+    orbit.phi = f.phi + (to.phi - f.phi) * k;
+    orbit.radius = f.radius + (to.radius - f.radius) * k;
+    orbit.target.set(f.tx + (to.tx - f.tx) * k, f.ty + (to.ty - f.ty) * k, f.tz + (to.tz - f.tz) * k);
+    if (e >= 1) camTween = null;
   }
 
-  function startPeelOut(key) {
+  // ---- 视角流程状态机 ----
+  var viewFlows = {};
+
+  // 面闪烁：让几何体上“对应方向的面”变黄（不显示任何画框）
+  var VIEW_FACE_IDX = { front: 4, top: 2, left: 1 }; // +z / +y / -x
+  var activeFlashes = { front: false, top: false, left: false };
+  function applyFaceHighlights() {
+    var pulse = 0.35 + 0.35 * Math.sin(performance.now() / 180);
+    for (var i = 0; i < cubes.length; i++) {
+      var c = cubes[i];
+      var sel = selectedIds.has(c.id);
+      for (var idx = 0; idx < 6; idx++) {
+        var flashing = (activeFlashes.front && idx === 4) || (activeFlashes.top && idx === 2) || (activeFlashes.left && idx === 1);
+        var m = c.mats[idx];
+        if (flashing) {
+          m.color.set(0xffd43b);
+          m.emissive.setHex(0xffa500);
+          m.emissiveIntensity = pulse;
+        } else {
+          m.color.set(sel ? SEL_COLOR : BASE_COLOR);
+          if (sel) { m.emissive.setHex(0x7a3d00); m.emissiveIntensity = 0.25; }
+          else { m.emissive.setHex(0x000000); m.emissiveIntensity = 0; }
+        }
+      }
+    }
+  }
+
+  function enableView(key) {
+    if (viewPanels[key]) return;
+    var target = getViewTargetCubes();
+    if (!target.length) {
+      document.getElementById('view-' + key).checked = false;
+      return;
+    }
+    var b = computeViewBBox(target);
+    viewBBox = b;
+    var cx2 = (b.min.x + b.max.x) / 2, cy2 = (b.min.y + b.max.y) / 2, cz2 = (b.min.z + b.max.z) / 2;
+    var diag = new THREE.Vector3(cx2, cy2, cz2).distanceTo(new THREE.Vector3(b.min.x, b.min.y, b.min.z));
+    // 镜头目标抬高到“几何体 + 右侧面板堆叠”的中间，保证都能看到
+    var maxFaceH = Math.max(b.max.y - b.min.y, b.max.z - b.min.z) + 1;
+    var step = Math.max(maxFaceH, 2) + 0.6;
+    var topY = (Math.max(maxFaceH, 2) / 2 + 0.3) + 2 * step + Math.max(maxFaceH, 2) / 2;
+    var frameY = (0 + topY) / 2;
+    var frameH = topY + 2;
+    var center = new THREE.Vector3(cx2, frameY, cz2);
+    var radius = Math.max(24, diag * 4.0, frameH * 1.25);
+    var ang = VIEW_ANGLES[key];
+    animateCameraTo(ang.theta, ang.phi, radius, center, 2500); // 几何体正对对应视角
+    createViewPanel(key); // 创建面板（黄色、放在面上、先隐藏）
+    viewFlows[key] = { stage: 'camera', key: key, t0: performance.now(), camDur: 2500, hlDur: 1400, moveDur: 3000 };
+  }
+
+  function disableView(key) {
     var p = viewPanels[key];
+    if (!p) return;
+    if (viewFlows[key]) {
+      activeFlashes[key] = false;
+      delete viewFlows[key];
+      removeViewPanel(key);
+      return;
+    }
     var start = viewStartPose(key);
-    p.tween = { type: 'peelOut', key: key, t0: performance.now(), dur: 950, start: start };
+    viewFlows[key] = {
+      stage: 'back', key: key, t0: performance.now(), dur: 2400,
+      fromPos: p.mesh.position.clone(), fromQuat: p.mesh.quaternion.clone(),
+      toPos: start.pos, toQuat: start.quat
+    };
     p.static = false;
-    p.out = true;
+  }
+
+  function updateViewFlows(now) {
+    var keys = Object.keys(viewFlows);
+    for (var i = 0; i < keys.length; i++) {
+      var f = viewFlows[keys[i]];
+      var p = viewPanels[f.key];
+      if (!p) continue;
+      var n = VIEW_NORMAL[f.key];
+      if (f.stage === 'camera') {
+        if (now - f.t0 >= f.camDur) {
+          // 镜头到位 → 几何体上对应的那几个面开始闪黄（不显示任何面板/画框）
+          f.stage = 'highlight';
+          f.t0 = now;
+          f.baseScale = p.mesh.scale.clone();
+          activeFlashes[f.key] = true;
+        }
+      } else if (f.stage === 'highlight') {
+        var tH = Math.min(1, (now - f.t0) / f.hlDur);
+        if (tH >= 1) {
+          activeFlashes[f.key] = false; // 闪烁结束，面恢复原色
+          f.stage = 'move';
+          f.t0 = now;
+          var sp = viewStartPose(f.key);
+          p.mesh.position.copy(sp.pos);
+          p.mesh.quaternion.copy(sp.quat);
+          p.mesh.visible = true;  // 平移时才显示面板
+          p.mat.opacity = 1;
+          p.mat.color.set(0xffd43b); // 从黄色开始，随移动变白露出内容
+          f.fromPos = sp.pos.clone();
+          f.fromQuat = sp.quat.clone();
+        }
+      } else if (f.stage === 'move') {
+        var tM = Math.min(1, (now - f.t0) / f.moveDur);
+        var eM = easeInOutCubic(tM);
+        var slotNow = viewSlotPos(f.key); // 每帧取屏幕右侧落点（统一向右平移）
+        p.mesh.position.copy(f.fromPos).lerp(slotNow.pos, eM);
+        p.mesh.quaternion.copy(f.fromQuat).slerp(slotNow.quat, eM); // 边平移边转向相机
+        // 前半段保持放大，后半段（生成视图）缩回正常大小
+        var growK;
+        if (tM < 0.65) growK = 0.28;
+        else growK = 0.28 * (1 - (tM - 0.65) / 0.35);
+        p.mesh.scale.copy(f.baseScale).multiplyScalar(1 + growK);
+        p.mat.color.setHex(Math.round(0xffd43b + (0xffffff - 0xffd43b) * eM)); // 黄→白，露出视图内容
+        if (tM >= 1) {
+          p.mat.color.set(0xffffff);
+          p.mesh.scale.copy(f.baseScale); // 确保正常大小
+          p.static = true;
+          delete viewFlows[f.key];
+        }
+      } else if (f.stage === 'back') {
+        var tB = Math.min(1, (now - f.t0) / f.dur);
+        var eB = easeInOutCubic(tB);
+        p.mesh.position.copy(f.fromPos).lerp(f.toPos, eB);
+        p.mesh.quaternion.copy(f.fromQuat).slerp(f.toQuat, eB);
+        p.mat.color.setHex(Math.round(0xffffff + (0xffd43b - 0xffffff) * eB));
+        if (tB >= 1) {
+          removeViewPanel(f.key);
+          delete viewFlows[f.key];
+        }
+      }
+    }
   }
 
   function updateView(key, now) {
     var p = viewPanels[key];
     if (!p) return;
-    var anchor = viewAnchorPos(key);
-    var endQuat = faceCameraQuat(p.mesh.position);
-
-    if (p.tween) {
-      var t = Math.min(1, (now - p.tween.t0) / p.tween.dur);
-      var e = easeInOutCubic(t);
-      var s = p.tween.start;
-      var n = VIEW_NORMAL[key];
-      if (p.tween.type === 'peelIn') {
-        var bulge = Math.sin(Math.PI * Math.min(t * 1.15, 1)) * 2.4;
-        p.mesh.position.copy(s.pos).lerp(anchor, e).addScaledVector(n, bulge);
-        p.mesh.quaternion.copy(s.quat).slerp(endQuat, e);
-      } else {
-        var bulge2 = Math.sin(Math.PI * t) * 1.4;
-        p.mesh.position.copy(anchor).lerp(s.pos, e).addScaledVector(n, bulge2);
-        p.mesh.quaternion.copy(endQuat).slerp(s.quat, e);
-      }
-      if (t >= 1) {
-        if (p.tween.type === 'peelOut') { removeViewPanel(key); return; }
-        p.tween = null;
-        p.static = true;
-      }
-    } else if (p.static) {
-      p.mesh.position.copy(anchor);
-      p.mesh.quaternion.copy(endQuat);
+    if (viewFlows[key]) { p.label.style.display = 'none'; return; }
+    if (p.static) {
+      var slot = viewSlotPos(key);
+      p.mesh.position.copy(slot.pos);
+      p.mesh.quaternion.copy(slot.quat);
     }
-
-    // 标签跟随
     var v = p.mesh.position.clone().project(camera);
-    if (v.z < 1) {
+    if (v.z < 1 && p.mesh.visible) {
       p.label.style.left = ((v.x * 0.5 + 0.5) * window.innerWidth) + 'px';
       p.label.style.top = ((-v.y * 0.5 + 0.5) * window.innerHeight - 22) + 'px';
       p.label.style.display = 'block';
@@ -509,6 +673,8 @@
       refreshViewContent();
       viewDirty = false;
     }
+    updateViewFlows(now);
+    applyFaceHighlights();
     var keys = Object.keys(viewPanels);
     for (var i = 0; i < keys.length; i++) updateView(keys[i], now);
   }
@@ -526,6 +692,7 @@
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
   function lerp(a, b, t) { return a + (b - a) * t; }
   function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
   function getNDC(e) {
     var r = canvas.getBoundingClientRect();
@@ -670,6 +837,7 @@
       return;
     }
     if (gesture.type === 'orbit') {
+      if (camTween) return;
       var dx = e.clientX - gesture.x, dy = e.clientY - gesture.y;
       gesture.x = e.clientX; gesture.y = e.clientY;
       gesture.moved += Math.abs(dx) + Math.abs(dy);
@@ -678,6 +846,7 @@
       return;
     }
     if (gesture.type === 'pan') {
+      if (camTween) return;
       var pdx = e.clientX - gesture.x, pdy = e.clientY - gesture.y;
       gesture.x = e.clientX; gesture.y = e.clientY;
       gesture.moved += Math.abs(pdx) + Math.abs(pdy);
@@ -790,6 +959,7 @@
   function animate(now) {
     requestAnimationFrame(animate);
     updateTweens(now);
+    updateCamTween(now);
     applyCamera();
     updateViews(now);
     renderer.render(scene, camera);
@@ -831,15 +1001,7 @@
     (function (key) {
       var cb = document.getElementById('view-' + key);
       cb.addEventListener('change', function () {
-        if (cb.checked) {
-          if (!viewPanels[key]) {
-            if (!getViewTargetCubes().length) { cb.checked = false; return; }
-            createViewPanel(key);
-            startPeelIn(key);
-          }
-        } else if (viewPanels[key]) {
-          startPeelOut(key);
-        }
+        if (cb.checked) { enableView(key); } else { disableView(key); }
       });
     })(viewKeys[vi]);
   }
